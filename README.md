@@ -7,7 +7,7 @@ T140 的 Fn 热键和屏幕显示（OSD）工具包。程序通过硬件 WMI 事
 | 文件 | 作用 |
 | --- | --- |
 | `BLDFnHotkeyUtility.exe` | 用户会话中的 OSD 窗口、WMI 热键监听和 Caps/Num Lock 监听程序 |
-| `BLDHotKeyService.exe` | Windows 服务，负责在用户登录、解锁或 OSD 进程退出后启动 OSD |
+| `BLDHotKeyService.exe` | Windows 服务，负责启动和监控 OSD，并在睡眠恢复或会话解锁后重启 OSD |
 | `InstallService.bat` | 以管理员权限安装或更新 `BLDHotKeyService` |
 | `UninstallService.bat` | 停止并卸载 `BLDHotKeyService` |
 | `InstallUtil.exe` | .NET Framework 服务安装工具 |
@@ -22,7 +22,7 @@ T140 的 Fn 热键和屏幕显示（OSD）工具包。程序通过硬件 WMI 事
 3. 使用 `InstallUtil.exe` 注册当前目录中的 `BLDHotKeyService.exe`。
 4. 注册为自动启动服务并立即启动。
 
-服务启动的是同一部署目录中的 `BLDFnHotkeyUtility.exe`。只替换 OSD EXE 后通常不需要重新安装服务，但必须重启当前 OSD 进程；如果服务注册路径指向旧目录，则需要从新目录重新运行 `InstallService.bat`。
+服务启动的是同一部署目录中的 `BLDFnHotkeyUtility.exe`。只要部署目录和服务注册路径没有变化，替换任一 EXE 后都不需要重新安装服务，但必须重启 `BLDHotKeyService` 才会加载新文件；如果服务注册路径指向旧目录，则需要从新目录重新运行 `InstallService.bat`。
 
 卸载时运行 `UninstallService.bat`。该操作会停止服务并终止由服务启动的 OSD 进程。
 
@@ -41,22 +41,27 @@ Get-CimInstance Win32_Service -Filter "Name='BLDHotKeyService'" |
 长时间运行或睡眠/唤醒后，原程序可能出现“进程仍在运行但状态切换不再显示”的问题，原因包括：
 
 - 分层窗口每次重绘创建的 `Bitmap` 没有及时释放，长期运行会积累图形资源。
-- 睡眠恢复、显示配置变化和 DPI 变化后没有重新提交分层窗口内容。
+- 睡眠后原有分层窗口可能仍存在，但对应的合成表面已经失效。
+- 该机器不会稳定地向 OSD 窗口发送 `WM_POWERBROADCAST` 恢复消息，因此仅在 OSD 内处理恢复消息并不可靠。
 - OSD 定时器在线程池线程中直接关闭窗口，旧定时器消息可能覆盖新的状态切换。
 
-当前 `BLDFnHotkeyUtility.exe` 已修复这些路径：
+当前版本采用“服务负责恢复、OSD 负责显示”的方式：
 
 - 释放分层窗口和 WM_PRINTCLIENT 绘制使用的位图及 GDI 对象。
-- 处理 `WM_POWERBROADCAST` 的恢复事件，以及显示/DPI 配置变化，并执行重绘和延迟重试。
 - 为 OSD 显示定时器增加代次校验，只处理当前状态的隐藏消息，并将窗口操作交回窗口消息线程。
-- 保留 EXE 版本 `1.0.6.1`，目标平台为 x86/.NET Framework 4.x。
+- `BLDHotKeyService` 通过 Windows Service Control Manager 接收系统恢复事件和会话解锁事件。
+- 收到 `ResumeAutomatic`、`ResumeCritical`、`ResumeSuspend` 或 `SessionUnlock` 后，服务等待 500 ms，再重启当前活动会话中的 OSD。
+- 500 ms 内连续到达的恢复和解锁通知会合并，避免重复重启。
+- OSD 不再使用每秒轮询来检测睡眠，空闲时没有新增的周期性唤醒。
+- 两个 EXE 均保留版本 `1.0.6.1`；OSD 目标平台为 x86/.NET Framework 4.x。
 
 ## 验证
 
-可以通过连续发送热键或锁定键状态进行显示测试；也应在睡眠/唤醒后再次切换状态确认 OSD 恢复。当前修复版的 SHA-256 为：
+可以通过连续发送热键或锁定键状态进行显示测试。睡眠/唤醒后，`BLDFnHotkeyUtility.exe` 的 PID 应发生变化，随后切换状态应正常显示 OSD。当前文件的 SHA-256 为：
 
 ```text
-99EC951A25563934801C38D11671713E9ADCDF2F1AF3BC7975D1CF8C6321CE8B
+BLDHotKeyService.exe:   66C9D65F3FDA313DDC7298F3DC1B0548A44DBAFF64F1D5D33D5D80F9CBB66FC3
+BLDFnHotkeyUtility.exe: AF3630FBE48C009F451EFC930E2085F634469B2B91F4B3EE6FA632A365E9D892
 ```
 
-仓库只包含发布包和可执行文件，没有原始 C# 工程源码；因此 OSD 修复以更新后的 `BLDFnHotkeyUtility.exe` 形式发布。
+仓库只包含发布包和可执行文件，没有原始 C# 工程源码；因此修复以更新后的服务和 OSD 可执行文件形式发布。
