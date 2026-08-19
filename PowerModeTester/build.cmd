@@ -1,0 +1,1 @@
+@echo off & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 /win32manifest:PowerModeTester.exe.manifest /out:PowerModeTester.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll PowerModeTester.cs
