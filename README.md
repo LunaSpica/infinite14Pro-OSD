@@ -45,23 +45,23 @@ Get-CimInstance Win32_Service -Filter "Name='BLDHotKeyService'" |
 - 该机器不会稳定地向 OSD 窗口发送 `WM_POWERBROADCAST` 恢复消息，因此仅在 OSD 内处理恢复消息并不可靠。
 - OSD 定时器在线程池线程中直接关闭窗口，旧定时器消息可能覆盖新的状态切换。
 
-当前版本采用“服务负责恢复、OSD 负责显示”的方式：
+当前版本采用“OSD 自检 + 服务事件恢复”的双层方式：
 
 - 释放分层窗口和 WM_PRINTCLIENT 绘制使用的位图及 GDI 对象。
 - 为 OSD 显示定时器增加代次校验，只处理当前状态的隐藏消息，并将窗口操作交回窗口消息线程。
+- OSD 的 UI 线程每秒记录一次时间；如果消息循环停顿超过 5 秒，则在恢复运行后自动重建分层窗口，不依赖 `WM_POWERBROADCAST`。
 - `BLDHotKeyService` 通过 Windows Service Control Manager 接收系统恢复事件和会话解锁事件。
 - 收到 `ResumeAutomatic`、`ResumeCritical`、`ResumeSuspend` 或 `SessionUnlock` 后，服务等待 500 ms，再重启当前活动会话中的 OSD。
 - 500 ms 内连续到达的恢复和解锁通知会合并，避免重复重启。
-- OSD 不再使用每秒轮询来检测睡眠，空闲时没有新增的周期性唤醒。
 - 两个 EXE 均保留版本 `1.0.6.1`；OSD 目标平台为 x86/.NET Framework 4.x。
 
 ## 验证
 
-可以通过连续发送热键或锁定键状态进行显示测试。睡眠/唤醒后，`BLDFnHotkeyUtility.exe` 的 PID 应发生变化，随后切换状态应正常显示 OSD。当前文件的 SHA-256 为：
+可以通过连续发送热键或锁定键状态进行显示测试。睡眠/唤醒后，服务收到恢复事件时会重启 OSD；即使系统未发送该事件，OSD 也会在检测到超过 5 秒的消息循环停顿后重建窗口。随后切换状态应正常显示 OSD。当前文件的 SHA-256 为：
 
 ```text
 BLDHotKeyService.exe:   66C9D65F3FDA313DDC7298F3DC1B0548A44DBAFF64F1D5D33D5D80F9CBB66FC3
-BLDFnHotkeyUtility.exe: AF3630FBE48C009F451EFC930E2085F634469B2B91F4B3EE6FA632A365E9D892
+BLDFnHotkeyUtility.exe: 1DA70D35278B6F4D06917D25267F9AF862FF9265F22DDBC176C5B3DE14177BEB
 ```
 
 仓库只包含发布包和可执行文件，没有原始 C# 工程源码；因此修复以更新后的服务和 OSD 可执行文件形式发布。
