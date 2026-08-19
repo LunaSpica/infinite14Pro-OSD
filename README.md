@@ -8,6 +8,7 @@ T140 的 Fn 热键和屏幕显示（OSD）工具包。程序通过硬件 WMI 事
 | --- | --- |
 | `BLDFnHotkeyUtility.exe` | 用户会话中的 OSD 窗口、WMI 热键监听和 Caps/Num Lock 监听程序 |
 | `BLDHotKeyService.exe` | Windows 服务，负责启动和监控 OSD，并在睡眠恢复或会话解锁后重启 OSD |
+| `BLDPowerModeHelper.exe` | x64 助手，为 OSD 调用 `PowerSetActiveOverlayScheme` 使 Windows 电源模式立即生效 |
 | `InstallService.bat` | 以管理员权限安装或更新 `BLDHotKeyService` |
 | `UninstallService.bat` | 停止并卸载 `BLDHotKeyService` |
 | `InstallUtil.exe` | .NET Framework 服务安装工具 |
@@ -55,13 +56,28 @@ Get-CimInstance Win32_Service -Filter "Name='BLDHotKeyService'" |
 - 500 ms 内连续到达的恢复和解锁通知会合并，避免重复重启。
 - 两个 EXE 均保留版本 `1.0.6.1`；OSD 目标平台为 x86/.NET Framework 4.x。
 
+## 性能档位 → Windows 电源模式同步
+
+OSD 的性能档位（WMI 事件 `SystemPerMode`，共 3 档）与 Windows 电源模式（电源滑块 overlay，AC/DC 两套记忆）自动同步：
+
+| OSD 档位 | Windows 电源模式 | Overlay GUID |
+| --- | --- | --- |
+| PerformanceMode（性能） | 最佳性能 | `ded574b5-45a0-4f42-8737-46345c09c238` |
+| BalanceMode（均衡） | 平衡 | `00000000-0000-0000-0000-000000000000` |
+| QuietMode（安静） | 最佳能效 | `961cc777-2547-4f9d-8174-7d86181b8a7a` |
+
+实现方式：OSD（x86，LocalSystem）收到事件或启动时写入 `ActiveOverlayAcPowerScheme` 与 `ActiveOverlayDcPowerScheme`（SYSTEM-only 键，OSD 具备权限），再调用同目录的 x64 助手 `BLDPowerModeHelper.exe` 调用 `PowerSetActiveOverlayScheme` 让当前供电状态立即生效。注意该 API 的 32 位实现在本机会导致访问违规（0xC0000005），因此必须经 x64 助手调用。所有同步动作会写入 `OSDEvents` 事件日志（前缀 `PowerModeSync:`）。
+
+反编译源码（含本功能的 `BLD.Power/PowerModeSync.cs`）位于仓库 `osd-src/` 目录；用 .NET Framework 4 的 Roslyn csc 以 x86 编译 OSD、x64 编译助手。
+
 ## 验证
 
 可以通过连续发送热键或锁定键状态进行显示测试。睡眠/唤醒后，服务收到恢复事件时会重启 OSD；即使系统未发送该事件，OSD 也会在检测到超过 5 秒的消息循环停顿后重建窗口。随后切换状态应正常显示 OSD。当前文件的 SHA-256 为：
 
 ```text
 BLDHotKeyService.exe:   66C9D65F3FDA313DDC7298F3DC1B0548A44DBAFF64F1D5D33D5D80F9CBB66FC3
-BLDFnHotkeyUtility.exe: 1DA70D35278B6F4D06917D25267F9AF862FF9265F22DDBC176C5B3DE14177BEB
+BLDFnHotkeyUtility.exe: CA2A1577AD492BC8EE66FE21391C12A69BEAA6A622972FD31333F7C9D4433B5D
+BLDPowerModeHelper.exe:  F02615E87E2B0143D5F3197CBE9677B821A8D0B77E2279878540AA9C810F377A
 ```
 
-仓库只包含发布包和可执行文件，没有原始 C# 工程源码；因此修复以更新后的服务和 OSD 可执行文件形式发布。
+仓库同时包含 `osd-src/` 目录中的反编译源码（含后续修复与电源模式同步功能），发布仍以更新后的可执行文件形式进行。
